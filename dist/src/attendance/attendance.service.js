@@ -68,7 +68,7 @@ let AttendanceService = class AttendanceService {
     async remove(id, user) { const record = await this.prisma.attendanceRecord.findUnique({ where: { id } }); if (!record)
         throw new common_1.NotFoundException('Attendance record not found'); if (user.role === client_1.UserRole.EMPLOYEE && record.employeeId !== user.employeeId)
         throw new common_1.ForbiddenException('Employees can only delete their own attendance'); await this.prisma.attendanceRecord.delete({ where: { id } }); return { success: true }; }
-    async csv(user, query) { const { items } = await this.findAll(user, { ...query, page: 1, limit: 10000 }); const header = 'Date,Employee,Department,Check-in,Check-out,Work hours,Status'; const lines = items.map((row) => [row.date.toISOString().slice(0, 10), `${row.employee.firstName} ${row.employee.lastName}`, row.employee.department, row.checkIn?.toISOString() ?? '', row.checkOut?.toISOString() ?? '', row.workHours?.toString() ?? '', row.status].map((field) => `"${String(field).replaceAll('"', '""')}"`).join(',')); return `${header}\n${lines.join('\n')}`; }
+    async csv(user, query) { const { items } = await this.findAll(user, { ...query, page: 1, limit: 10000 }); const header = 'Date,Employee,Department,Check-in,Check-out,Work hours,Status'; const lines = items.map((row) => [row.date.toISOString().slice(0, 10), `${row.employee.firstName} ${row.employee.lastName}`, row.employee.department, row.checkIn?.toISOString() ?? '', row.checkOut?.toISOString() ?? '', row.workHours?.toString() ?? '', row.status].map((field) => `"${String(field).replace(/"/g, '""')}"`).join(',')); return `${header}\n${lines.join('\n')}`; }
 };
 exports.AttendanceService = AttendanceService;
 exports.AttendanceService = AttendanceService = __decorate([
