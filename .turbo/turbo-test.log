@@ -1,0 +1,12 @@
+
+> @peopleos/api@0.1.0 test /Users/vivekraj/Desktop/hrms/backend
+> jest --config test/jest.json --runInBand
+
+PASS test/authorization.spec.ts
+PASS test/auth.service.spec.ts
+
+Test Suites: 2 passed, 2 total
+Tests:       3 passed, 3 total
+Snapshots:   0 total
+Time:        0.646 s, estimated 1 s
+Ran all test suites.

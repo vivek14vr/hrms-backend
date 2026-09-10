@@ -1,0 +1,4 @@
+
+> @peopleos/api@0.1.0 lint /Users/vivekraj/Desktop/hrms/backend
+> eslint "{src,test}/**/*.ts"
+
