@@ -7,7 +7,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/types/request-user';
 
-const cookieOptions = (maxAge: number) => ({ httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' as const, maxAge, path: '/' });
+const isProduction = process.env.NODE_ENV === 'production';
+const cookieOptions = (maxAge: number) => ({ httpOnly: true, secure: isProduction, sameSite: isProduction ? ('none' as const) : ('lax' as const), maxAge, path: '/' });
 
 @ApiTags('auth')
 @Controller('auth')
