@@ -32,6 +32,7 @@ const dateAt = (date: Date, hour: number, minute = 0) => {
 };
 
 async function main() {
+  if (process.env.NODE_ENV === 'production') throw new Error('Refusing to run the destructive seed in production; use prisma migrate deploy and start the application instead');
   const seedUsers = {
     admin: { email: requiredSeedValue('SEED_ADMIN_EMAIL'), password: requiredSeedValue('SEED_ADMIN_PASSWORD') },
     hr: { email: requiredSeedValue('SEED_HR_EMAIL'), password: requiredSeedValue('SEED_HR_PASSWORD') },

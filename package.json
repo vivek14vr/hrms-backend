@@ -6,6 +6,7 @@
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "node dist/src/main.js",
+    "start:production": "prisma migrate deploy && npm run start",
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "test": "jest --config test/jest.json --runInBand",
     "prisma:generate": "prisma generate",
