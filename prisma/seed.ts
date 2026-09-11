@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { PrismaClient, UserRole, EmploymentType, EmploymentStatus, AttendanceStatus, PaymentStatus } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
@@ -18,6 +19,12 @@ const employees = [
   ['Lucas', 'Silva', 'Finance', 'Controller', 'Lisbon', 101000],
 ] as const;
 
+const requiredSeedValue = (name: string) => {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} must be set explicitly before running the seed`);
+  return value;
+};
+
 const dateAt = (date: Date, hour: number, minute = 0) => {
   const copy = new Date(date);
   copy.setHours(hour, minute, 0, 0);
@@ -25,12 +32,24 @@ const dateAt = (date: Date, hour: number, minute = 0) => {
 };
 
 async function main() {
+  const seedUsers = {
+    admin: { email: requiredSeedValue('SEED_ADMIN_EMAIL'), password: requiredSeedValue('SEED_ADMIN_PASSWORD') },
+    hr: { email: requiredSeedValue('SEED_HR_EMAIL'), password: requiredSeedValue('SEED_HR_PASSWORD') },
+    employee: { email: requiredSeedValue('SEED_EMPLOYEE_EMAIL'), password: requiredSeedValue('SEED_EMPLOYEE_PASSWORD') },
+  };
+  await prisma.auditEvent.deleteMany();
+  await prisma.passwordResetToken.deleteMany();
+  await prisma.leaveRequest.deleteMany();
+  await prisma.leaveBalance.deleteMany();
+  await prisma.leaveType.deleteMany();
   await prisma.salarySlip.deleteMany();
+  await prisma.payrollRun.deleteMany();
   await prisma.attendanceRecord.deleteMany();
+  await prisma.workspaceSettings.deleteMany();
+  await prisma.holiday.deleteMany();
   await prisma.user.deleteMany();
   await prisma.employee.deleteMany();
 
-  const passwordHash = await bcrypt.hash('Employee@123', 12);
   const employeeRows = [];
   for (let index = 0; index < employees.length; index += 1) {
     const [firstName, lastName, department, designation, location, baseSalary] = employees[index];
@@ -51,6 +70,12 @@ async function main() {
     });
     employeeRows.push(row);
   }
+  await prisma.employeeCodeSequence.upsert({
+    where: { id: 'employee-code' },
+    update: { nextValue: employeeRows.length + 1 },
+    create: { id: 'employee-code', nextValue: employeeRows.length + 1 },
+  });
+  await prisma.workspaceSettings.create({ data: { id: 'workspace-settings', name: 'PeopleOS Demo', timezone: 'Asia/Kolkata', currency: 'INR', workWeek: 'Monday – Friday' } });
 
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -91,9 +116,20 @@ async function main() {
     }
   }
 
-  await prisma.user.create({ data: { name: 'Mira Kapoor', email: 'admin@peopleos.demo', passwordHash: await bcrypt.hash('Admin@123', 12), role: UserRole.ADMIN } });
-  await prisma.user.create({ data: { name: 'Isha Nair', email: 'hr@peopleos.demo', passwordHash: await bcrypt.hash('Hr@123456', 12), role: UserRole.HR_MANAGER } });
-  await prisma.user.create({ data: { name: 'Ava Sharma', email: 'employee@peopleos.demo', passwordHash, role: UserRole.EMPLOYEE, employeeId: employeeRows[0].id } });
+  const leaveTypes = await Promise.all([
+    prisma.leaveType.create({ data: { code: 'ANNUAL', name: 'Annual leave', paid: true, annualAllowance: 20 } }),
+    prisma.leaveType.create({ data: { code: 'SICK', name: 'Sick leave', paid: true, annualAllowance: 12 } }),
+    prisma.leaveType.create({ data: { code: 'UNPAID', name: 'Unpaid leave', paid: false, annualAllowance: 30 } }),
+  ]);
+  for (const employee of employeeRows) {
+    for (const leaveType of leaveTypes) {
+      await prisma.leaveBalance.create({ data: { employeeId: employee.id, leaveTypeId: leaveType.id, year: now.getFullYear(), allocated: leaveType.annualAllowance } });
+    }
+  }
+
+  await prisma.user.create({ data: { name: 'Mira Kapoor', email: seedUsers.admin.email.toLowerCase(), passwordHash: await bcrypt.hash(seedUsers.admin.password, 12), role: UserRole.ADMIN } });
+  await prisma.user.create({ data: { name: 'Isha Nair', email: seedUsers.hr.email.toLowerCase(), passwordHash: await bcrypt.hash(seedUsers.hr.password, 12), role: UserRole.HR_MANAGER } });
+  await prisma.user.create({ data: { name: 'Ava Sharma', email: seedUsers.employee.email.toLowerCase(), passwordHash: await bcrypt.hash(seedUsers.employee.password, 12), role: UserRole.EMPLOYEE, employeeId: employeeRows[0].id } });
   console.log(`Seeded ${employeeRows.length} employees across ${departments.length} departments.`);
 }
 

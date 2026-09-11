@@ -1,28 +1,46 @@
 import { Injectable } from '@nestjs/common';
-import { AttendanceStatus, PaymentStatus, Prisma, UserRole } from '@prisma/client';
+import { AttendanceStatus, EmploymentStatus, PaymentStatus, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestUser } from '../common/types/request-user';
+import { calendarDateInTimeZone, monthPeriod, workingDays, workingWeekdays } from '../attendance/attendance-metrics';
 
 @Injectable()
 export class DashboardService {
   constructor(private readonly prisma: PrismaService) {}
   async summary(user: RequestUser) {
-    const now = new Date(); const start = new Date(now.getFullYear(), now.getMonth(), 1); const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const now = new Date();
+    const [settings, employee] = await Promise.all([
+      this.prisma.workspaceSettings.findUnique({ where: { id: 'workspace-settings' }, select: { timezone: true, workWeek: true } }),
+      user.role === UserRole.EMPLOYEE && user.employeeId && this.prisma.employee?.findUnique ? this.prisma.employee.findUnique({ where: { id: user.employeeId }, select: { schedule: { select: { timezone: true, workWeek: true, active: true } } } }) : Promise.resolve(null),
+    ]);
+    const schedule = employee?.schedule?.active ? employee.schedule : null;
+    const timezone = schedule?.timezone ?? settings?.timezone;
+    const workWeek = schedule?.workWeek ?? settings?.workWeek;
+    const currentDate = calendarDateInTimeZone(now, timezone);
+    const currentMonth = Number(currentDate.slice(5, 7)); const currentYear = Number(currentDate.slice(0, 4));
+    const { start, endExclusive: end } = monthPeriod(currentMonth, currentYear, now, timezone);
     const employeeWhere = user.role === UserRole.EMPLOYEE ? { id: user.employeeId ?? '__none__' } : {};
-    const [totalEmployees, activeEmployees, employeesOnLeave, attendanceRows, currentPayroll, pendingPayroll] = await Promise.all([
+    const [totalEmployees, activeEmployees, employeesOnLeave, attendanceRows, currentPayroll, pendingPayroll, holidays] = await Promise.all([
       this.prisma.employee.count({ where: employeeWhere }), this.prisma.employee.count({ where: { ...employeeWhere, employmentStatus: 'ACTIVE' } }), this.prisma.employee.count({ where: { ...employeeWhere, employmentStatus: 'ON_LEAVE' } }),
       this.prisma.attendanceRecord.findMany({ where: { employeeId: user.role === UserRole.EMPLOYEE ? user.employeeId ?? '__none__' : undefined, date: { gte: start, lt: end } }, select: { status: true } }),
-      this.prisma.salarySlip.aggregate({ where: { employeeId: user.role === UserRole.EMPLOYEE ? user.employeeId ?? '__none__' : undefined, month: now.getMonth() + 1, year: now.getFullYear() }, _sum: { netSalary: true } }),
+      this.prisma.salarySlip.aggregate({ where: { employeeId: user.role === UserRole.EMPLOYEE ? user.employeeId ?? '__none__' : undefined, month: currentMonth, year: currentYear }, _sum: { netSalary: true } }),
       this.prisma.salarySlip.aggregate({ where: { employeeId: user.role === UserRole.EMPLOYEE ? user.employeeId ?? '__none__' : undefined, paymentStatus: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] } }, _sum: { netSalary: true } }),
+      this.prisma.holiday.findMany({ where: { active: true, date: { gte: start, lt: end } }, select: { date: true } }),
     ]);
     const workingStatuses = new Set<AttendanceStatus>([AttendanceStatus.PRESENT, AttendanceStatus.LATE, AttendanceStatus.WORK_FROM_HOME]);
     const working = attendanceRows.filter((row) => workingStatuses.has(row.status)).length;
-    return { totalEmployees, activeEmployees, employeesOnLeave, attendancePercentage: attendanceRows.length ? Math.round((working / attendanceRows.length) * 100) : 0, monthlyPayrollTotal: Number(currentPayroll._sum.netSalary ?? 0), pendingPayroll: Number(pendingPayroll._sum.netSalary ?? 0) };
+    const expectedEmployeeCount = user.role === UserRole.EMPLOYEE ? (user.employeeId ? 1 : 0) : activeEmployees;
+    const expectedWorkingDays = expectedEmployeeCount * workingDays(start, end, holidays.map((holiday) => holiday.date), workingWeekdays(workWeek));
+    return { totalEmployees, activeEmployees, employeesOnLeave, expectedWorkingDays, attendancePercentage: expectedWorkingDays ? Math.min(100, Math.round((working / expectedWorkingDays) * 100)) : 0, monthlyPayrollTotal: Number(currentPayroll._sum.netSalary ?? 0), pendingPayroll: Number(pendingPayroll._sum.netSalary ?? 0) };
   }
   async attendanceTrend(user: RequestUser, months = 6) {
-    const now = new Date(); const results = [];
+    const now = new Date(); const [settings, employee] = await Promise.all([this.prisma.workspaceSettings.findUnique({ where: { id: 'workspace-settings' }, select: { timezone: true, workWeek: true } }), user.role === UserRole.EMPLOYEE && user.employeeId && this.prisma.employee?.findUnique ? this.prisma.employee.findUnique({ where: { id: user.employeeId }, select: { schedule: { select: { timezone: true, workWeek: true, active: true } } } }) : Promise.resolve(null)]); const schedule = employee?.schedule?.active ? employee.schedule : null; const timezone = schedule?.timezone ?? settings?.timezone; const workWeek = schedule?.workWeek ?? settings?.workWeek; const currentDate = calendarDateInTimeZone(now, timezone); const currentYear = Number(currentDate.slice(0, 4)); const currentMonth = Number(currentDate.slice(5, 7)); const results = [];
     const workingStatuses = new Set<AttendanceStatus>([AttendanceStatus.PRESENT, AttendanceStatus.LATE, AttendanceStatus.WORK_FROM_HOME]);
-    for (let offset = months - 1; offset >= 0; offset -= 1) { const date = new Date(now.getFullYear(), now.getMonth() - offset, 1); const next = new Date(date.getFullYear(), date.getMonth() + 1, 1); const rows = await this.prisma.attendanceRecord.findMany({ where: { employeeId: user.role === UserRole.EMPLOYEE ? user.employeeId ?? '__none__' : undefined, date: { gte: date, lt: next } }, select: { status: true } }); const working = rows.filter((row) => workingStatuses.has(row.status)).length; results.push({ month: date.toLocaleString('en-US', { month: 'short' }), attendance: rows.length ? Math.round((working / rows.length) * 100) : 0 }); }
+    const employeeCount = user.role === UserRole.EMPLOYEE ? (user.employeeId ? 1 : 0) : await this.prisma.employee.count({ where: { employmentStatus: EmploymentStatus.ACTIVE } });
+    const trendStart = new Date(Date.UTC(currentYear, currentMonth - months, 1));
+    const trendEnd = new Date(Date.UTC(currentYear, currentMonth, 1));
+    const holidays = await this.prisma.holiday.findMany({ where: { active: true, date: { gte: trendStart, lt: trendEnd } }, select: { date: true } });
+    for (let offset = months - 1; offset >= 0; offset -= 1) { const date = new Date(Date.UTC(currentYear, currentMonth - 1 - offset, 1)); const { start, endExclusive } = monthPeriod(date.getUTCMonth() + 1, date.getUTCFullYear(), now, timezone); const monthHolidays = holidays.filter((holiday) => holiday.date >= start && holiday.date < endExclusive).map((holiday) => holiday.date); const rows = await this.prisma.attendanceRecord.findMany({ where: { employeeId: user.role === UserRole.EMPLOYEE ? user.employeeId ?? '__none__' : undefined, date: { gte: start, lt: endExclusive } }, select: { status: true } }); const working = rows.filter((row) => workingStatuses.has(row.status)).length; const expectedWorkingDays = employeeCount * workingDays(start, endExclusive, monthHolidays, workingWeekdays(workWeek)); results.push({ month: date.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' }), attendance: expectedWorkingDays ? Math.min(100, Math.round((working / expectedWorkingDays) * 100)) : 0 }); }
     return results;
   }
   async departmentHeadcount() { const rows = await this.prisma.employee.groupBy({ by: ['department'], where: { employmentStatus: { not: 'TERMINATED' } }, _count: { _all: true }, orderBy: { department: 'asc' } }); return rows.map((row) => ({ department: row.department, count: row._count._all })); }
